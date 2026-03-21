@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Role {
+  id       Int       @id @default(autoincrement())
+  nombre   String    @unique
+  usuarios Usuario[]
+}
+
+model Usuario {
+  id                   Int       @id @default(autoincrement())
+  nombre_apellido      String
+  dni                  String    @unique
+  device_id            String?
+  device_fingerprint   Json?
+  rol_id               Int
+  rol                  Role      @relation(fields: [rol_id], references: [id])
+  activo               Boolean   @default(true)
+  device_registered_at DateTime?
+  device_last_seen_at  DateTime?
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+  fichadas             Fichada[]
+}
+
+model Servicio {
+  id       Int       @id @default(autoincrement())
+  nombre   String    @unique
+  lat      Float
+  lon      Float
+  activo   Boolean   @default(true)
+  fichadas Fichada[]
+}
+
+model Fichada {
+  id          Int      @id @default(autoincrement())
+  usuario_id  Int
+  usuario     Usuario  @relation(fields: [usuario_id], references: [id])
+  fecha       DateTime @db.Date
+  entrada     DateTime?
+  salida      DateTime?
+  lat         Float
+  lon         Float
+  servicio_id Int
+  servicio    Servicio @relation(fields: [servicio_id], references: [id])
+  fingerprint Json?
+  created_at  DateTime @default(now())
+
+  @@unique([usuario_id, fecha])
+}
