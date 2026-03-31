@@ -1,19 +1,9 @@
 const prisma = require("../config/prisma");
 const { findNearestService } = require("../utils/geo");
-
-const MAX_DISTANCE_METERS = 200;
-const DEFAULT_ROLE_NAME = "VIGILADOR";
+const AppError = require("../utils/appError");
+const { ROLES } = require("../constants/roles");
+const { ensureRoles } = require("./auth.service");
 const APP_TIMEZONE = process.env.APP_TIMEZONE || "America/Argentina/Buenos_Aires";
-
-class AppError extends Error {
-  constructor(message, statusCode = 400, code = "BAD_REQUEST", details) {
-    super(message);
-    this.name = "AppError";
-    this.statusCode = statusCode;
-    this.code = code;
-    this.details = details;
-  }
-}
 
 function normalizeDni(dni) {
   return String(dni || "").trim();
@@ -48,7 +38,7 @@ function validatePayload(payload) {
   }
 
   if (!deviceId || deviceId.length < 6) {
-    throw new AppError("El deviceId es invalido.", 400, "INVALID_DEVICE_ID");
+    throw new AppError("El identificador del dispositivo es inválido.", 400, "INVALID_DEVICE_ID");
   }
 
   return {
@@ -77,30 +67,29 @@ function getStartOfDay(date = new Date()) {
   return new Date(`${year}-${month}-${day}T00:00:00.000Z`);
 }
 
-async function getOrCreateRole(tx) {
-  const existingRole = await tx.role.findUnique({
-    where: { nombre: DEFAULT_ROLE_NAME },
-  });
-
-  if (existingRole) {
-    return existingRole;
-  }
-
-  return tx.role.create({
-    data: {
-      nombre: DEFAULT_ROLE_NAME,
-    },
-  });
-}
-
 async function findActiveServiceOrFail(lat, lng) {
   const services = await prisma.servicio.findMany({
     where: { activo: true },
   });
 
-  const nearestService = findNearestService(lat, lng, services, MAX_DISTANCE_METERS);
+  const nearestService = findNearestService(
+    lat,
+    lng,
+    services,
+    Math.max(...services.map((service) => service.radio_metros || 200), 200)
+  );
 
   if (!nearestService) {
+    throw new AppError(
+      "No estas dentro de una zona valida para fichar.",
+      400,
+      "OUT_OF_SERVICE_AREA"
+    );
+  }
+
+  const allowedRadius = nearestService.radio_metros || 200;
+
+  if (nearestService.distanceMeters > allowedRadius) {
     throw new AppError(
       "No estas dentro de una zona valida para fichar.",
       400,
@@ -114,31 +103,16 @@ async function findActiveServiceOrFail(lat, lng) {
 async function ensureUser(payload, now, tx) {
   const existingUser = await tx.usuario.findUnique({
     where: { dni: payload.dni },
+    include: { rol: true },
   });
 
   if (!existingUser) {
-    if (!payload.nombreApellido) {
-      throw new AppError(
-        "El usuario no existe y necesita registro previo.",
-        409,
-        "NEEDS_REGISTRATION",
-        { needsRegistration: true }
-      );
-    }
-
-    const role = await getOrCreateRole(tx);
-
-    return tx.usuario.create({
-      data: {
-        dni: payload.dni,
-        nombre_apellido: payload.nombreApellido,
-        rol_id: role.id,
-        device_id: payload.deviceId,
-        device_fingerprint: payload.fingerprint,
-        device_registered_at: now,
-        device_last_seen_at: now,
-      },
-    });
+    throw new AppError(
+      "El usuario no existe y necesita registro previo.",
+      409,
+      "NEEDS_REGISTRATION",
+      { needsRegistration: true }
+    );
   }
 
   if (!existingUser.activo) {
@@ -173,25 +147,74 @@ async function ensureUser(payload, now, tx) {
   return tx.usuario.update({
     where: { id: existingUser.id },
     data: userData,
+    include: { rol: true },
   });
 }
 
-async function registerPunch(tx, user, service, payload, now) {
-  const date = getStartOfDay(now);
-
-  const existingPunch = await tx.fichada.findUnique({
+async function registerEmployeePunch(tx, user, service, payload, now, date) {
+  const firstPunchOfDay = await tx.fichada.findFirst({
     where: {
-      usuario_id_fecha: {
+      usuario_id: user.id,
+      fecha: date,
+    },
+    include: {
+      servicio: true,
+    },
+    orderBy: [{ created_at: "asc" }, { id: "asc" }],
+  });
+
+  if (!firstPunchOfDay) {
+    const punch = await tx.fichada.create({
+      data: {
         usuario_id: user.id,
         fecha: date,
+        entrada: now,
+        lat: payload.lat,
+        lon: payload.lng,
+        servicio_id: service.id,
+        fingerprint: payload.fingerprint,
       },
+      include: {
+        servicio: true,
+      },
+    });
+
+    return {
+      action: "ENTRADA",
+      punch,
+    };
+  }
+
+  const punch = await tx.fichada.update({
+    where: { id: firstPunchOfDay.id },
+    data: {
+      salida: now,
+      fingerprint: payload.fingerprint,
     },
     include: {
       servicio: true,
     },
   });
 
-  if (!existingPunch) {
+  return {
+    action: "SALIDA",
+    punch,
+  };
+}
+
+async function registerSupervisorPunch(tx, user, service, payload, now, date) {
+  const existingPunch = await tx.fichada.findFirst({
+    where: {
+      usuario_id: user.id,
+      fecha: date,
+    },
+    include: {
+      servicio: true,
+    },
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+  });
+
+  if (!existingPunch || existingPunch.salida) {
     const punch = await tx.fichada.create({
       data: {
         usuario_id: user.id,
@@ -214,13 +237,40 @@ async function registerPunch(tx, user, service, payload, now) {
   }
 
   if (!existingPunch.salida) {
+    if (existingPunch.servicio_id !== service.id) {
+      await tx.fichada.update({
+        where: { id: existingPunch.id },
+        data: {
+          salida: now,
+          fingerprint: payload.fingerprint,
+        },
+      });
+
+      const punch = await tx.fichada.create({
+        data: {
+          usuario_id: user.id,
+          fecha: date,
+          entrada: now,
+          lat: payload.lat,
+          lon: payload.lng,
+          servicio_id: service.id,
+          fingerprint: payload.fingerprint,
+        },
+        include: {
+          servicio: true,
+        },
+      });
+
+      return {
+        action: "TRASLADO",
+        punch,
+      };
+    }
+
     const punch = await tx.fichada.update({
       where: { id: existingPunch.id },
       data: {
         salida: now,
-        lat: payload.lat,
-        lon: payload.lng,
-        servicio_id: service.id,
         fingerprint: payload.fingerprint,
       },
       include: {
@@ -234,14 +284,22 @@ async function registerPunch(tx, user, service, payload, now) {
     };
   }
 
-  throw new AppError(
-    "El usuario ya registro entrada y salida en el dia.",
-    409,
-    "ALREADY_COMPLETED_TODAY"
-  );
+  throw new AppError("No fue posible registrar la fichada.", 409, "PUNCH_CONFLICT");
+}
+
+async function registerPunch(tx, user, service, payload, now) {
+  const date = getStartOfDay(now);
+
+  if (user.rol?.nombre === ROLES.EMPLOYEE) {
+    return registerEmployeePunch(tx, user, service, payload, now, date);
+  }
+
+  return registerSupervisorPunch(tx, user, service, payload, now, date);
 }
 
 async function registrarFichada(payload) {
+  await ensureRoles();
+
   const validatedPayload = validatePayload(payload);
   const now = new Date();
   const service = await findActiveServiceOrFail(validatedPayload.lat, validatedPayload.lng);

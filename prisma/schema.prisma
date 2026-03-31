@@ -16,6 +16,10 @@ model Usuario {
   id                   Int       @id @default(autoincrement())
   nombre_apellido      String
   dni                  String    @unique
+  email                String?   @unique
+  password_hash        String?
+  reset_code_hash      String?
+  reset_code_expires_at DateTime?
   device_id            String?
   device_fingerprint   Json?
   rol_id               Int
@@ -29,12 +33,14 @@ model Usuario {
 }
 
 model Servicio {
-  id       Int       @id @default(autoincrement())
-  nombre   String    @unique
-  lat      Float
-  lon      Float
-  activo   Boolean   @default(true)
-  fichadas Fichada[]
+  id                  Int       @id @default(autoincrement())
+  nombre              String    @unique
+  lat                 Float
+  lon                 Float
+  radio_metros        Int       @default(200)
+  hora_entrada_limite String?
+  activo              Boolean   @default(true)
+  fichadas            Fichada[]
 }
 
 model Fichada {
@@ -50,6 +56,4 @@ model Fichada {
   servicio    Servicio @relation(fields: [servicio_id], references: [id])
   fingerprint Json?
   created_at  DateTime @default(now())
-
-  @@unique([usuario_id, fecha])
 }

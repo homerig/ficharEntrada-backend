@@ -1,0 +1,34 @@
+ALTER TABLE "Usuario"
+ADD COLUMN "password_hash" TEXT;
+
+ALTER TABLE "Servicio"
+ADD COLUMN "radio_metros" INTEGER NOT NULL DEFAULT 200,
+ADD COLUMN "hora_entrada_limite" TEXT;
+
+UPDATE "Role"
+SET "nombre" = 'EMPLOYEE'
+WHERE "nombre" = 'VIGILADOR';
+
+INSERT INTO "Role" ("nombre")
+SELECT 'ADMINISTRADOR'
+WHERE NOT EXISTS (
+    SELECT 1 FROM "Role" WHERE "nombre" = 'ADMINISTRADOR'
+);
+
+INSERT INTO "Role" ("nombre")
+SELECT 'BOSS'
+WHERE NOT EXISTS (
+    SELECT 1 FROM "Role" WHERE "nombre" = 'BOSS'
+);
+
+INSERT INTO "Role" ("nombre")
+SELECT 'SUPERVISOR'
+WHERE NOT EXISTS (
+    SELECT 1 FROM "Role" WHERE "nombre" = 'SUPERVISOR'
+);
+
+INSERT INTO "Role" ("nombre")
+SELECT 'EMPLOYEE'
+WHERE NOT EXISTS (
+    SELECT 1 FROM "Role" WHERE "nombre" = 'EMPLOYEE'
+);

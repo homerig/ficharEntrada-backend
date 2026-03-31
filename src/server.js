@@ -2,12 +2,14 @@ require("dotenv").config();
 
 const app = require("./app");
 const prisma = require("./config/prisma");
+const { bootstrapAdmin } = require("./services/auth.service");
 
 const PORT = Number(process.env.PORT) || 3000;
 
 async function bootstrap() {
   try {
     await prisma.$connect();
+    await bootstrapAdmin();
 
     app.listen(PORT, () => {
       console.log(`Servidor escuchando en puerto ${PORT}`);
