@@ -54,9 +54,37 @@ async function deleteService(req, res, next) {
   }
 }
 
+async function deactivateService(req, res, next) {
+  try {
+    const result = await serviciosService.setServiceStatus(req.params.id, false);
+
+    return res.status(200).json({
+      ok: true,
+      data: result,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function activateService(req, res, next) {
+  try {
+    const result = await serviciosService.setServiceStatus(req.params.id, true);
+
+    return res.status(200).json({
+      ok: true,
+      data: result,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 module.exports = {
   listServices,
   createService,
   updateService,
+  deactivateService,
+  activateService,
   deleteService,
 };

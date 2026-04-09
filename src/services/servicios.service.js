@@ -167,7 +167,7 @@ async function updateService(serviceId, payload) {
   }
 }
 
-async function deleteService(serviceId) {
+async function setServiceStatus(serviceId, activo) {
   const id = Number(serviceId);
 
   if (!Number.isInteger(id) || id <= 0) {
@@ -184,15 +184,50 @@ async function deleteService(serviceId) {
 
   const service = await prisma.servicio.update({
     where: { id },
-    data: { activo: false },
+    data: { activo: Boolean(activo) },
   });
 
   return mapService(service);
+}
+
+async function deleteService(serviceId) {
+  const id = Number(serviceId);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new AppError("El id del servicio es invalido.", 400, "INVALID_SERVICE_ID");
+  }
+
+  const existingService = await prisma.servicio.findUnique({
+    where: { id },
+  });
+
+  if (!existingService) {
+    throw new AppError("Servicio no encontrado.", 404, "SERVICE_NOT_FOUND");
+  }
+
+  try {
+    const deletedService = await prisma.servicio.delete({
+      where: { id },
+    });
+
+    return mapService(deletedService);
+  } catch (error) {
+    if (error.code === "P2003") {
+      throw new AppError(
+        "No se puede eliminar el servicio porque tiene fichadas asociadas.",
+        409,
+        "SERVICE_HAS_ASSOCIATED_RECORDS"
+      );
+    }
+
+    throw error;
+  }
 }
 
 module.exports = {
   listServices,
   createService,
   updateService,
+  setServiceStatus,
   deleteService,
 };
