@@ -62,7 +62,33 @@ async function listUsers() {
 }
 
 function canCreatePrivilegedUsers(actorUser) {
-  return actorUser?.role === ROLES.ADMINISTRADOR;
+  return [ROLES.ADMINISTRADOR, ROLES.BOSS].includes(actorUser?.role);
+}
+
+function isBoss(actorUser) {
+  return actorUser?.role === ROLES.BOSS;
+}
+
+function ensureBossCanChangeRole(actorUser, existingRoleName, nextRoleName) {
+  if (!isBoss(actorUser)) {
+    return;
+  }
+
+  if (existingRoleName !== ROLES.ADMINISTRADOR && nextRoleName === ROLES.ADMINISTRADOR) {
+    throw new AppError(
+      "No tenes permisos para asignar el rol de administrador.",
+      403,
+      "FORBIDDEN_ADMIN_ROLE_ASSIGNMENT"
+    );
+  }
+
+  if (existingRoleName === ROLES.ADMINISTRADOR && nextRoleName !== ROLES.ADMINISTRADOR) {
+    throw new AppError(
+      "No tenes permisos para cambiar el rol del administrador.",
+      403,
+      "FORBIDDEN_ADMIN_ROLE_CHANGE"
+    );
+  }
 }
 
 async function createUser(payload, actorUser = null) {
@@ -96,6 +122,14 @@ async function createUser(payload, actorUser = null) {
   }
 
   const role = await getRoleOrFail(roleName);
+
+  if (isBoss(actorUser) && role.nombre === ROLES.ADMINISTRADOR) {
+    throw new AppError(
+      "No tenes permisos para asignar el rol de administrador.",
+      403,
+      "FORBIDDEN_ADMIN_ROLE_ASSIGNMENT"
+    );
+  }
 
   if (role.nombre === ROLES.ADMINISTRADOR) {
     await ensureUniqueAdmin(prisma);
@@ -135,7 +169,7 @@ async function createUser(payload, actorUser = null) {
   }
 }
 
-async function updateUser(userId, payload) {
+async function updateUser(userId, payload, actorUser = null) {
   await ensureRoles();
 
   const id = Number(userId);
@@ -192,6 +226,8 @@ async function updateUser(userId, payload) {
   if (payload.role !== undefined) {
     const roleName = normalizeRole(payload.role);
     const role = await getRoleOrFail(roleName);
+
+    ensureBossCanChangeRole(actorUser, existingUser.rol.nombre, role.nombre);
 
     if (role.nombre === ROLES.ADMINISTRADOR) {
       await ensureUniqueAdmin(prisma, existingUser.id);

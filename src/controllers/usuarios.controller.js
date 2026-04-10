@@ -28,7 +28,7 @@ async function createUser(req, res, next) {
 
 async function updateUser(req, res, next) {
   try {
-    const result = await usuariosService.updateUser(req.params.id, req.body);
+    const result = await usuariosService.updateUser(req.params.id, req.body, req.user);
 
     return res.status(200).json({
       ok: true,
