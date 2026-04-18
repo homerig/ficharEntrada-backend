@@ -3,7 +3,7 @@ const { findNearestService } = require("../utils/geo");
 const AppError = require("../utils/appError");
 const { ROLES } = require("../constants/roles");
 const { ensureRoles } = require("./auth.service");
-const APP_TIMEZONE = process.env.APP_TIMEZONE || "America/Argentina/Buenos_Aires";
+const { formatDateOnly, getDateStringInTimezone } = require("../utils/datetime");
 
 function normalizeDni(dni) {
   return String(dni || "").trim();
@@ -52,19 +52,7 @@ function validatePayload(payload) {
 }
 
 function getStartOfDay(date = new Date()) {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: APP_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
-  const parts = formatter.formatToParts(date);
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-
-  return new Date(`${year}-${month}-${day}T00:00:00.000Z`);
+  return new Date(`${getDateStringInTimezone(date)}T00:00:00.000Z`);
 }
 
 async function findActiveServiceOrFail(lat, lng) {
@@ -322,7 +310,7 @@ async function registrarFichada(payload) {
       },
       fichada: {
         id: punchResult.punch.id,
-        fecha: punchResult.punch.fecha,
+        fecha: formatDateOnly(punchResult.punch.fecha),
         entrada: punchResult.punch.entrada,
         salida: punchResult.punch.salida,
       },

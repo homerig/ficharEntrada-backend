@@ -1,44 +1,14 @@
 const ExcelJS = require("exceljs");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
-
-const APP_TIMEZONE = process.env.APP_TIMEZONE || "America/Argentina/Buenos_Aires";
+const { formatDateOnly, getDatePartsInTimezone } = require("../utils/datetime");
 
 function pad(value) {
   return String(value).padStart(2, "0");
 }
 
-function getDatePartsInTimezone(date) {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: APP_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-
-  const parts = formatter.formatToParts(date);
-  const values = {};
-
-  for (const part of parts) {
-    if (part.type !== "literal") {
-      values[part.type] = part.value;
-    }
-  }
-
-  return values;
-}
-
 function formatDate(date) {
-  if (!date) {
-    return "";
-  }
-
-  const parts = getDatePartsInTimezone(date);
-  return `${parts.year}-${parts.month}-${parts.day}`;
+  return formatDateOnly(date);
 }
 
 function formatDateTime(date) {
