@@ -2,6 +2,12 @@ const ExcelJS = require("exceljs");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const { formatDateOnly, getDatePartsInTimezone } = require("../utils/datetime");
+const { evaluatePunchAgainstShifts, resolveServiceShiftStarts } = require("../utils/shifts");
+
+const DEFAULT_SHIFT_TOLERANCE_MINUTES = Number.parseInt(
+  process.env.APP_SHIFT_TOLERANCE_MINUTES || "60",
+  10
+);
 
 function pad(value) {
   return String(value).padStart(2, "0");
@@ -34,12 +40,71 @@ function getTimeFromDate(date) {
   return `${parts.hour}:${parts.minute}`;
 }
 
-function isLatePunch(punch) {
-  if (!punch.entrada || !punch.servicio?.hora_entrada_limite) {
-    return false;
+function getPunchDayKey(punch) {
+  return `${punch.usuario_id}:${formatDateOnly(punch.fecha)}`;
+}
+
+function isEarlierPunch(leftPunch, rightPunch) {
+  const leftTime = leftPunch.entrada ? new Date(leftPunch.entrada).getTime() : new Date(leftPunch.created_at).getTime();
+  const rightTime = rightPunch.entrada ? new Date(rightPunch.entrada).getTime() : new Date(rightPunch.created_at).getTime();
+
+  if (leftTime !== rightTime) {
+    return leftTime < rightTime;
   }
 
-  return getTimeFromDate(punch.entrada) > punch.servicio.hora_entrada_limite;
+  return leftPunch.id < rightPunch.id;
+}
+
+function buildFirstPunchMap(punches) {
+  const firstPunchMap = new Map();
+
+  for (const punch of punches) {
+    const key = getPunchDayKey(punch);
+    const existingPunch = firstPunchMap.get(key);
+
+    if (!existingPunch || isEarlierPunch(punch, existingPunch)) {
+      firstPunchMap.set(key, punch);
+    }
+  }
+
+  return firstPunchMap;
+}
+
+function getLateEvaluation(punch, firstPunchMap) {
+  if (!punch.entrada) {
+    return {
+      isLate: false,
+      assignedShift: null,
+      minutesLate: 0,
+      isFirstPunchOfDay: false,
+    };
+  }
+
+  const key = getPunchDayKey(punch);
+  const firstPunch = firstPunchMap.get(key);
+  const isFirstPunchOfDay = firstPunch?.id === punch.id;
+
+  if (!isFirstPunchOfDay) {
+    return {
+      isLate: false,
+      assignedShift: null,
+      minutesLate: 0,
+      isFirstPunchOfDay,
+    };
+  }
+
+  const entryTime = getTimeFromDate(punch.entrada);
+  const shiftStarts = resolveServiceShiftStarts(punch.servicio);
+  const evaluation = evaluatePunchAgainstShifts(
+    entryTime,
+    shiftStarts,
+    punch.servicio?.tolerancia_turno_minutos ?? DEFAULT_SHIFT_TOLERANCE_MINUTES
+  );
+
+  return {
+    ...evaluation,
+    isFirstPunchOfDay,
+  };
 }
 
 function getDateRange(filters) {
@@ -117,14 +182,25 @@ async function getPunches(filters) {
           rol: true,
         },
       },
-      servicio: true,
+      servicio: {
+        include: {
+          turnos: {
+            orderBy: [{ orden: "asc" }, { hora_inicio: "asc" }],
+          },
+        },
+      },
     },
     orderBy: [{ fecha: "desc" }, { entrada: "desc" }],
   });
 
   const lateOnly = String(filters.lateOnly || "false").toLowerCase() === "true";
+  const firstPunchMap = buildFirstPunchMap(punches);
+  const enrichedPunches = punches.map((punch) => ({
+    ...punch,
+    lateEvaluation: getLateEvaluation(punch, firstPunchMap),
+  }));
 
-  return punches.filter((punch) => !lateOnly || isLatePunch(punch));
+  return enrichedPunches.filter((punch) => !lateOnly || punch.lateEvaluation.isLate);
 }
 
 async function exportPunchesExcel(filters) {
@@ -151,7 +227,7 @@ async function exportPunchesExcel(filters) {
       servicio: punch.servicio.nombre,
     });
 
-    if (isLatePunch(punch)) {
+    if (punch.lateEvaluation?.isLate) {
       row.getCell("entrada").fill = {
         type: "pattern",
         pattern: "solid",

@@ -39,8 +39,24 @@ model Servicio {
   lon                 Float
   radio_metros        Int       @default(200)
   hora_entrada_limite String?
+  tolerancia_turno_minutos Int   @default(60)
   activo              Boolean   @default(true)
   fichadas            Fichada[]
+  turnos              ServicioTurno[]
+}
+
+model ServicioTurno {
+  id          Int      @id @default(autoincrement())
+  servicio_id Int
+  servicio    Servicio @relation(fields: [servicio_id], references: [id], onDelete: Cascade)
+  hora_inicio String
+  hora_fin    String?
+  orden       Int      @default(0)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([servicio_id, hora_inicio])
+  @@index([servicio_id, orden, hora_inicio])
 }
 
 model Fichada {

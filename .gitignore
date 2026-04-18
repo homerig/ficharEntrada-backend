@@ -1,5 +1,5 @@
 node_modules
 # Keep environment variables out of version control
 .env
-
+backup_pre_migracion_2026-04-17.sql
 /generated/prisma
